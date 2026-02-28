@@ -97,6 +97,10 @@ export function GlobalSessionMonitor() {
             if (!isCurrentSession && (!oldSession || newSession.lastTimestamp > oldSession.lastTimestamp)) {
                 // 这是新消息事件
 
+                // 免打扰、折叠群、折叠入口不弹通知
+                if (newSession.isMuted || newSession.isFolded) continue
+                if (newSession.username.toLowerCase().includes('placeholder_foldgroup')) continue
+
                 // 1. 群聊过滤自己发送的消息
                 if (newSession.username.includes('@chatroom')) {
                     // 如果是自己发的消息，不弹通知
@@ -253,7 +257,8 @@ export function GlobalSessionMonitor() {
     const handleActiveSessionRefresh = async (sessionId: string) => {
         // 从 ChatPage 复制/调整的逻辑，以保持集中
         const state = useChatStore.getState()
-        const lastMsg = state.messages[state.messages.length - 1]
+        const msgs = state.messages || []
+        const lastMsg = msgs[msgs.length - 1]
         const minTime = lastMsg?.createTime || 0
 
         try {

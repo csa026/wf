@@ -1082,6 +1082,26 @@ function registerIpcHandlers() {
     return { canceled: false, filePath: result.filePaths[0] }
   })
 
+  ipcMain.handle('sns:installBlockDeleteTrigger', async () => {
+    return snsService.installSnsBlockDeleteTrigger()
+  })
+
+  ipcMain.handle('sns:uninstallBlockDeleteTrigger', async () => {
+    return snsService.uninstallSnsBlockDeleteTrigger()
+  })
+
+  ipcMain.handle('sns:checkBlockDeleteTrigger', async () => {
+    return snsService.checkSnsBlockDeleteTrigger()
+  })
+
+  ipcMain.handle('sns:deleteSnsPost', async (_, postId: string) => {
+    return snsService.deleteSnsPost(postId)
+  })
+
+  ipcMain.handle('sns:downloadEmoji', async (_, params: { url: string; encryptUrl?: string; aesKey?: string }) => {
+    return snsService.downloadSnsEmoji(params.url, params.encryptUrl, params.aesKey)
+  })
+
   // 私聊克隆
 
 

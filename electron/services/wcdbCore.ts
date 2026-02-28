@@ -3,6 +3,48 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, readFileS
 
 // DLL 初始化错误信息，用于帮助用户诊断问题
 let lastDllInitError: string | null = null
+
+/**
+ * 解析 extra_buffer（protobuf）中的免打扰状态
+ * - field 12 (tag 0x60): 值非0 = 免打扰
+ * 折叠状态通过 contact.flag & 0x10000000 判断
+ */
+function parseExtraBuffer(raw: Buffer | string | null | undefined): { isMuted: boolean } {
+  if (!raw) return { isMuted: false }
+  // execQuery 返回的 BLOB 列是十六进制字符串，需要先解码
+  const buf: Buffer = typeof raw === 'string' ? Buffer.from(raw, 'hex') : raw
+  if (buf.length === 0) return { isMuted: false }
+  let isMuted = false
+  let i = 0
+  const len = buf.length
+
+  const readVarint = (): number => {
+    let result = 0, shift = 0
+    while (i < len) {
+      const b = buf[i++]
+      result |= (b & 0x7f) << shift
+      shift += 7
+      if (!(b & 0x80)) break
+    }
+    return result
+  }
+
+  while (i < len) {
+    const tag = readVarint()
+    const fieldNum = tag >>> 3
+    const wireType = tag & 0x07
+    if (wireType === 0) {
+      const val = readVarint()
+      if (fieldNum === 12 && val !== 0) isMuted = true
+    } else if (wireType === 2) {
+      const sz = readVarint()
+      i += sz
+    } else if (wireType === 5) { i += 4
+    } else if (wireType === 1) { i += 8
+    } else { break }
+  }
+  return { isMuted }
+}
 export function getLastDllInitError(): string | null {
   return lastDllInitError
 }
@@ -41,6 +83,7 @@ export class WcdbCore {
   private wcdbGetMessageTables: any = null
   private wcdbGetMessageMeta: any = null
   private wcdbGetContact: any = null
+  private wcdbGetContactStatus: any = null
   private wcdbGetMessageTableStats: any = null
   private wcdbGetAggregateStats: any = null
   private wcdbGetAvailableYears: any = null
@@ -63,6 +106,10 @@ export class WcdbCore {
   private wcdbGetVoiceData: any = null
   private wcdbGetSnsTimeline: any = null
   private wcdbGetSnsAnnualStats: any = null
+  private wcdbInstallSnsBlockDeleteTrigger: any = null
+  private wcdbUninstallSnsBlockDeleteTrigger: any = null
+  private wcdbCheckSnsBlockDeleteTrigger: any = null
+  private wcdbDeleteSnsPost: any = null
   private wcdbVerifyUser: any = null
   private wcdbStartMonitorPipe: any = null
   private wcdbStopMonitorPipe: any = null
@@ -483,6 +530,13 @@ export class WcdbCore {
       // wcdb_status wcdb_get_contact(wcdb_handle handle, const char* username, char** out_json)
       this.wcdbGetContact = this.lib.func('int32 wcdb_get_contact(int64 handle, const char* username, _Out_ void** outJson)')
 
+      // wcdb_status wcdb_get_contact_status(wcdb_handle handle, const char* usernames_json, char** out_json)
+      try {
+        this.wcdbGetContactStatus = this.lib.func('int32 wcdb_get_contact_status(int64 handle, const char* usernamesJson, _Out_ void** outJson)')
+      } catch {
+        this.wcdbGetContactStatus = null
+      }
+
       // wcdb_status wcdb_get_message_table_stats(wcdb_handle handle, const char* session_id, char** out_json)
       this.wcdbGetMessageTableStats = this.lib.func('int32 wcdb_get_message_table_stats(int64 handle, const char* sessionId, _Out_ void** outJson)')
 
@@ -598,6 +652,34 @@ export class WcdbCore {
         this.wcdbGetSnsAnnualStats = this.lib.func('int32 wcdb_get_sns_annual_stats(int64 handle, int32 begin, int32 end, _Out_ void** outJson)')
       } catch {
         this.wcdbGetSnsAnnualStats = null
+      }
+
+      // wcdb_status wcdb_install_sns_block_delete_trigger(wcdb_handle handle, char** out_error)
+      try {
+        this.wcdbInstallSnsBlockDeleteTrigger = this.lib.func('int32 wcdb_install_sns_block_delete_trigger(int64 handle, _Out_ void** outError)')
+      } catch {
+        this.wcdbInstallSnsBlockDeleteTrigger = null
+      }
+
+      // wcdb_status wcdb_uninstall_sns_block_delete_trigger(wcdb_handle handle, char** out_error)
+      try {
+        this.wcdbUninstallSnsBlockDeleteTrigger = this.lib.func('int32 wcdb_uninstall_sns_block_delete_trigger(int64 handle, _Out_ void** outError)')
+      } catch {
+        this.wcdbUninstallSnsBlockDeleteTrigger = null
+      }
+
+      // wcdb_status wcdb_check_sns_block_delete_trigger(wcdb_handle handle, int32_t* out_installed)
+      try {
+        this.wcdbCheckSnsBlockDeleteTrigger = this.lib.func('int32 wcdb_check_sns_block_delete_trigger(int64 handle, _Out_ int32* outInstalled)')
+      } catch {
+        this.wcdbCheckSnsBlockDeleteTrigger = null
+      }
+
+      // wcdb_status wcdb_delete_sns_post(wcdb_handle handle, const char* post_id, char** out_error)
+      try {
+        this.wcdbDeleteSnsPost = this.lib.func('int32 wcdb_delete_sns_post(int64 handle, const char* postId, _Out_ void** outError)')
+      } catch {
+        this.wcdbDeleteSnsPost = null
       }
 
       // Named pipe IPC for monitoring (replaces callback)
@@ -1338,6 +1420,36 @@ export class WcdbCore {
     }
   }
 
+  async getContactStatus(usernames: string[]): Promise<{ success: boolean; map?: Record<string, { isFolded: boolean; isMuted: boolean }>; error?: string }> {
+    if (!this.ensureReady()) {
+      return { success: false, error: 'WCDB 未连接' }
+    }
+    try {
+      // 分批查询，避免 SQL 过长（execQuery 不支持参数绑定，直接拼 SQL）
+      const BATCH = 200
+      const map: Record<string, { isFolded: boolean; isMuted: boolean }> = {}
+      for (let i = 0; i < usernames.length; i += BATCH) {
+        const batch = usernames.slice(i, i + BATCH)
+        const inList = batch.map(u => `'${u.replace(/'/g, "''")}'`).join(',')
+        const sql = `SELECT username, flag, extra_buffer FROM contact WHERE username IN (${inList})`
+        const result = await this.execQuery('contact', null, sql)
+        if (!result.success || !result.rows) continue
+        for (const row of result.rows) {
+          const uname: string = row.username
+          // 折叠：flag bit 28 (0x10000000)
+          const flag = parseInt(row.flag ?? '0', 10)
+          const isFolded = (flag & 0x10000000) !== 0
+          // 免打扰：extra_buffer field 12 非0
+          const { isMuted } = parseExtraBuffer(row.extra_buffer)
+          map[uname] = { isFolded, isMuted }
+        }
+      }
+      return { success: true, map }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
   async getAggregateStats(sessionIds: string[], beginTimestamp: number = 0, endTimestamp: number = 0): Promise<{ success: boolean; data?: any; error?: string }> {
     if (!this.ensureReady()) {
       return { success: false, error: 'WCDB 未连接' }
@@ -1813,6 +1925,94 @@ export class WcdbCore {
       return { success: false, error: String(e) }
     }
   }
+  /**
+   * 为朋友圈安装删除
+   */
+  async installSnsBlockDeleteTrigger(): Promise<{ success: boolean; alreadyInstalled?: boolean; error?: string }> {
+    if (!this.ensureReady()) return { success: false, error: 'WCDB 未连接' }
+    if (!this.wcdbInstallSnsBlockDeleteTrigger) return { success: false, error: '当前 DLL 版本不支持此功能' }
+    try {
+      const outPtr = [null]
+      const status = this.wcdbInstallSnsBlockDeleteTrigger(this.handle, outPtr)
+      let msg = ''
+      if (outPtr[0]) {
+        try { msg = this.koffi.decode(outPtr[0], 'char', -1) } catch { }
+        try { this.wcdbFreeString(outPtr[0]) } catch { }
+      }
+      if (status === 1) {
+        // DLL 返回 1 表示已安装
+        return { success: true, alreadyInstalled: true }
+      }
+      if (status !== 0) {
+        return { success: false, error: msg || `DLL error ${status}` }
+      }
+      return { success: true, alreadyInstalled: false }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
+   * 关闭朋友圈删除拦截
+   */
+  async uninstallSnsBlockDeleteTrigger(): Promise<{ success: boolean; error?: string }> {
+    if (!this.ensureReady()) return { success: false, error: 'WCDB 未连接' }
+    if (!this.wcdbUninstallSnsBlockDeleteTrigger) return { success: false, error: '当前 DLL 版本不支持此功能' }
+    try {
+      const outPtr = [null]
+      const status = this.wcdbUninstallSnsBlockDeleteTrigger(this.handle, outPtr)
+      let msg = ''
+      if (outPtr[0]) {
+        try { msg = this.koffi.decode(outPtr[0], 'char', -1) } catch { }
+        try { this.wcdbFreeString(outPtr[0]) } catch { }
+      }
+      if (status !== 0) {
+        return { success: false, error: msg || `DLL error ${status}` }
+      }
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
+   * 查询朋友圈删除拦截是否已安装
+   */
+  async checkSnsBlockDeleteTrigger(): Promise<{ success: boolean; installed?: boolean; error?: string }> {
+    if (!this.ensureReady()) return { success: false, error: 'WCDB 未连接' }
+    if (!this.wcdbCheckSnsBlockDeleteTrigger) return { success: false, error: '当前 DLL 版本不支持此功能' }
+    try {
+      const outInstalled = [0]
+      const status = this.wcdbCheckSnsBlockDeleteTrigger(this.handle, outInstalled)
+      if (status !== 0) {
+        return { success: false, error: `DLL error ${status}` }
+      }
+      return { success: true, installed: outInstalled[0] === 1 }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  async deleteSnsPost(postId: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.ensureReady()) return { success: false, error: 'WCDB 未连接' }
+    if (!this.wcdbDeleteSnsPost) return { success: false, error: '当前 DLL 版本不支持此功能' }
+    try {
+      const outPtr = [null]
+      const status = this.wcdbDeleteSnsPost(this.handle, postId, outPtr)
+      let msg = ''
+      if (outPtr[0]) {
+        try { msg = this.koffi.decode(outPtr[0], 'char', -1) } catch { }
+        try { this.wcdbFreeString(outPtr[0]) } catch { }
+      }
+      if (status !== 0) {
+        return { success: false, error: msg || `DLL error ${status}` }
+      }
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
   async getDualReportStats(sessionId: string, beginTimestamp: number = 0, endTimestamp: number = 0): Promise<{ success: boolean; data?: any; error?: string }> {
     if (!this.ensureReady()) {
       return { success: false, error: 'WCDB 未连接' }

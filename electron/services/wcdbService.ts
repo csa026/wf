@@ -291,6 +291,13 @@ export class WcdbService {
   }
 
   /**
+   * 批量获取联系人 extra_buffer 状态（isFolded/isMuted）
+   */
+  async getContactStatus(usernames: string[]): Promise<{ success: boolean; map?: Record<string, { isFolded: boolean; isMuted: boolean }>; error?: string }> {
+    return this.callWorker('getContactStatus', { usernames })
+  }
+
+  /**
    * 获取聚合统计数据
    */
   async getAggregateStats(sessionIds: string[], beginTimestamp: number = 0, endTimestamp: number = 0): Promise<{ success: boolean; data?: any; error?: string }> {
@@ -414,6 +421,34 @@ export class WcdbService {
    */
   async getSnsAnnualStats(beginTimestamp: number, endTimestamp: number): Promise<{ success: boolean; data?: any; error?: string }> {
     return this.callWorker('getSnsAnnualStats', { beginTimestamp, endTimestamp })
+  }
+
+  /**
+   * 安装朋友圈删除拦截
+   */
+  async installSnsBlockDeleteTrigger(): Promise<{ success: boolean; alreadyInstalled?: boolean; error?: string }> {
+    return this.callWorker('installSnsBlockDeleteTrigger')
+  }
+
+  /**
+   * 卸载朋友圈删除拦截
+   */
+  async uninstallSnsBlockDeleteTrigger(): Promise<{ success: boolean; error?: string }> {
+    return this.callWorker('uninstallSnsBlockDeleteTrigger')
+  }
+
+  /**
+   * 查询朋友圈删除拦截是否已安装
+   */
+  async checkSnsBlockDeleteTrigger(): Promise<{ success: boolean; installed?: boolean; error?: string }> {
+    return this.callWorker('checkSnsBlockDeleteTrigger')
+  }
+
+  /**
+   * 从数据库直接删除朋友圈记录
+   */
+  async deleteSnsPost(postId: string): Promise<{ success: boolean; error?: string }> {
+    return this.callWorker('deleteSnsPost', { postId })
   }
 
   /**

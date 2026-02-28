@@ -12,6 +12,8 @@ export interface ChatSession {
   lastMsgSender?: string
   lastSenderDisplayName?: string
   selfWxid?: string // Helper field to avoid extra API calls
+  isFolded?: boolean  // 是否已折叠进"折叠的群聊"
+  isMuted?: boolean   // 是否开启免打扰
 }
 
 // 联系人
@@ -51,6 +53,7 @@ export interface Message {
   imageDatName?: string
   emojiCdnUrl?: string
   emojiMd5?: string
+  emojiLocalPath?: string   // 本地缓存路径（转发表情包无 CDN URL 时使用）
   voiceDurationSeconds?: number
   videoMd5?: string
   // 引用消息

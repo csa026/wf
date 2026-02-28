@@ -87,6 +87,9 @@ if (parentPort) {
                 case 'getContact':
                     result = await core.getContact(payload.username)
                     break
+                case 'getContactStatus':
+                    result = await core.getContactStatus(payload.usernames)
+                    break
                 case 'getAggregateStats':
                     result = await core.getAggregateStats(payload.sessionIds, payload.beginTimestamp, payload.endTimestamp)
                     break
@@ -143,6 +146,18 @@ if (parentPort) {
                     break
                 case 'getSnsAnnualStats':
                     result = await core.getSnsAnnualStats(payload.beginTimestamp, payload.endTimestamp)
+                    break
+                case 'installSnsBlockDeleteTrigger':
+                    result = await core.installSnsBlockDeleteTrigger()
+                    break
+                case 'uninstallSnsBlockDeleteTrigger':
+                    result = await core.uninstallSnsBlockDeleteTrigger()
+                    break
+                case 'checkSnsBlockDeleteTrigger':
+                    result = await core.checkSnsBlockDeleteTrigger()
+                    break
+                case 'deleteSnsPost':
+                    result = await core.deleteSnsPost(payload.postId)
                     break
                 case 'getLogs':
                     result = await core.getLogs()

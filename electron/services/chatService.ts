@@ -34,6 +34,8 @@ export interface ChatSession {
   lastMsgSender?: string
   lastSenderDisplayName?: string
   selfWxid?: string
+  isFolded?: boolean  // 是否已折叠进"折叠的群聊"
+  isMuted?: boolean   // 是否开启免打扰
 }
 
 export interface Message {
@@ -413,10 +415,27 @@ class ChatService {
           lastMsgType,
           displayName,
           avatarUrl,
-          lastMsgSender: row.last_msg_sender, // 数据库返回字段
-          lastSenderDisplayName: row.last_sender_display_name, // 数据库返回字段
+          lastMsgSender: row.last_msg_sender,
+          lastSenderDisplayName: row.last_sender_display_name,
           selfWxid: myWxid
         })
+      }
+
+      // 批量拉取 extra_buffer 状态（isFolded/isMuted），不阻塞主流程
+      const allUsernames = sessions.map(s => s.username)
+      try {
+        const statusResult = await wcdbService.getContactStatus(allUsernames)
+        if (statusResult.success && statusResult.map) {
+          for (const s of sessions) {
+            const st = statusResult.map[s.username]
+            if (st) {
+              s.isFolded = st.isFolded
+              s.isMuted = st.isMuted
+            }
+          }
+        }
+      } catch {
+        // 状态获取失败不影响会话列表返回
       }
 
       // 不等待联系人信息加载，直接返回基础会话列表
@@ -2846,15 +2865,16 @@ class ChatService {
   private shouldKeepSession(username: string): boolean {
     if (!username) return false
     const lowered = username.toLowerCase()
-    if (lowered.includes('@placeholder') || lowered.includes('foldgroup')) return false
+    // placeholder_foldgroup 是折叠群入口，需要保留
+    if (lowered.includes('@placeholder') && !lowered.includes('foldgroup')) return false
     if (username.startsWith('gh_')) return false
 
     const excludeList = [
       'weixin', 'qqmail', 'fmessage', 'medianote', 'floatbottle',
       'newsapp', 'brandsessionholder', 'brandservicesessionholder',
       'notifymessage', 'opencustomerservicemsg', 'notification_messages',
-      'userexperience_alarm', 'helper_folders', 'placeholder_foldgroup',
-      '@helper_folders', '@placeholder_foldgroup'
+      'userexperience_alarm', 'helper_folders',
+      '@helper_folders'
     ]
 
     for (const prefix of excludeList) {
@@ -4478,77 +4498,27 @@ class ChatService {
   }
 
   private resolveAccountDir(dbPath: string, wxid: string): string | null {
-    const cleanedWxid = this.cleanAccountDirName(wxid).toLowerCase()
-    const normalized = dbPath.replace(/[\\/]+$/, '')
+    const normalized = dbPath.replace(/[\\\\/]+$/, '')
 
-    const candidates: { path: string; mtime: number }[] = []
-
-    // 检查直接路径
-    const direct = join(normalized, cleanedWxid)
-    if (existsSync(direct) && this.isAccountDir(direct)) {
-      candidates.push({ path: direct, mtime: this.getDirMtime(direct) })
+    // 如果 dbPath 本身指向 db_storage 目录下的文件（如某个 .db 文件）
+    // 则向上回溯到账号目录
+    if (basename(normalized).toLowerCase() === 'db_storage') {
+      return dirname(normalized)
+    }
+    const dir = dirname(normalized)
+    if (basename(dir).toLowerCase() === 'db_storage') {
+      return dirname(dir)
     }
 
-    // 检查 dbPath 本身是否就是账号目录
-    if (this.isAccountDir(normalized)) {
-      candidates.push({ path: normalized, mtime: this.getDirMtime(normalized) })
+    // 否则，dbPath 应该是数据库根目录（如 xwechat_files）
+    // 账号目录应该是 {dbPath}/{wxid}
+    const accountDirWithWxid = join(normalized, wxid)
+    if (existsSync(accountDirWithWxid)) {
+      return accountDirWithWxid
     }
 
-    // 扫描 dbPath 下的所有子目录寻找匹配的 wxid
-    try {
-      if (existsSync(normalized) && statSync(normalized).isDirectory()) {
-        const entries = readdirSync(normalized)
-        for (const entry of entries) {
-          const entryPath = join(normalized, entry)
-          try {
-            if (!statSync(entryPath).isDirectory()) continue
-          } catch { continue }
-          
-          const lowerEntry = entry.toLowerCase()
-          if (lowerEntry === cleanedWxid || lowerEntry.startsWith(`${cleanedWxid}_`)) {
-            if (this.isAccountDir(entryPath)) {
-              if (!candidates.some(c => c.path === entryPath)) {
-                candidates.push({ path: entryPath, mtime: this.getDirMtime(entryPath) })
-              }
-            }
-          }
-        }
-      }
-    } catch { }
-
-    if (candidates.length === 0) return null
-
-    // 按修改时间降序排序，取最新的
-    candidates.sort((a, b) => b.mtime - a.mtime)
-    return candidates[0].path
-  }
-
-  private isAccountDir(dirPath: string): boolean {
-    return (
-      existsSync(join(dirPath, 'db_storage')) ||
-      existsSync(join(dirPath, 'FileStorage', 'Image')) ||
-      existsSync(join(dirPath, 'FileStorage', 'Image2')) ||
-      existsSync(join(dirPath, 'msg', 'attach'))
-    )
-  }
-
-  private getDirMtime(dirPath: string): number {
-    try {
-      const stat = statSync(dirPath)
-      let mtime = stat.mtimeMs
-      const subDirs = ['db_storage', 'msg/attach', 'FileStorage/Image']
-      for (const sub of subDirs) {
-        const fullPath = join(dirPath, sub)
-        if (existsSync(fullPath)) {
-          try {
-            mtime = Math.max(mtime, statSync(fullPath).mtimeMs)
-          } catch { }
-        }
-      }
-      return mtime
-    } catch {
-      return 0
-    }
+    // 兜底：返回 dbPath 本身（可能 dbPath 已经是账号目录）
+    return normalized
   }
 
   private async findDatFile(accountDir: string, baseName: string, sessionId?: string): Promise<string | null> {
