@@ -1905,6 +1905,14 @@ function ExportPage() {
       .sort((a, b) => (a.displayName || a.username).localeCompare(b.displayName || b.username, 'zh-Hans-CN'))
   }, [contactsList, activeTab, searchKeyword])
 
+  const sessionRowByUsername = useMemo(() => {
+    const map = new Map<string, SessionRow>()
+    for (const session of sessions) {
+      map.set(session.username, session)
+    }
+    return map
+  }, [sessions])
+
   const contactsUpdatedAtLabel = useMemo(() => {
     if (!contactsUpdatedAt) return ''
     return new Date(contactsUpdatedAt).toLocaleString()
@@ -2407,6 +2415,11 @@ function ExportPage() {
                 {visibleContacts.map((contact, idx) => {
                   const absoluteIndex = contactStartIndex + idx
                   const top = absoluteIndex * CONTACTS_LIST_VIRTUAL_ROW_HEIGHT
+                  const matchedSession = sessionRowByUsername.get(contact.username)
+                  const canExport = Boolean(matchedSession?.hasSession)
+                  const isRunning = canExport && runningSessionIds.has(contact.username)
+                  const isQueued = canExport && queuedSessionIds.has(contact.username)
+                  const recent = canExport ? formatRecentExportTime(lastExportBySession[contact.username], nowTick) : ''
                   return (
                     <div
                       key={contact.username}
@@ -2427,6 +2440,27 @@ function ExportPage() {
                         </div>
                         <div className={`contact-type ${contact.type}`}>
                           <span>{getContactTypeName(contact.type)}</span>
+                        </div>
+                        <div className="row-action-cell">
+                          <button
+                            className={`row-export-btn ${isRunning ? 'running' : ''} ${!canExport ? 'no-session' : ''}`}
+                            disabled={!canExport || isRunning}
+                            onClick={() => {
+                              if (!matchedSession || !matchedSession.hasSession) return
+                              openSingleExport({
+                                ...matchedSession,
+                                displayName: contact.displayName || matchedSession.displayName || matchedSession.username
+                              })
+                            }}
+                          >
+                            {isRunning ? (
+                              <>
+                                <Loader2 size={14} className="spin" />
+                                导出中
+                              </>
+                            ) : !canExport ? '暂无会话' : isQueued ? '排队中' : '导出'}
+                          </button>
+                          {recent && <span className="row-export-time">{recent}</span>}
                         </div>
                       </div>
                     </div>
