@@ -10,6 +10,8 @@ import * as configService from '../services/config'
 const SNS_PAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const SNS_PAGE_CACHE_POST_LIMIT = 200
 const SNS_PAGE_CACHE_SCOPE_FALLBACK = '__default__'
+const CONTACTS_PRUNE_BATCH_SIZE = 40
+const CONTACTS_PRUNE_INTERVAL_MS = 80
 
 interface Contact {
     username: string
@@ -87,6 +89,7 @@ export default function SnsPage() {
     const cacheScopeKeyRef = useRef('')
     const scrollAdjustmentRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
     const contactsLoadTokenRef = useRef(0)
+    const contactsPruneTimerRef = useRef<number | null>(null)
 
     // Sync posts ref
     useEffect(() => {
@@ -107,6 +110,14 @@ export default function SnsPage() {
     useEffect(() => {
         jumpTargetDateRef.current = jumpTargetDate
     }, [jumpTargetDate])
+    useEffect(() => {
+        return () => {
+            if (contactsPruneTimerRef.current !== null) {
+                window.clearTimeout(contactsPruneTimerRef.current)
+                contactsPruneTimerRef.current = null
+            }
+        }
+    }, [])
     // 在 DOM 更新后、浏览器绘制前同步调整滚动位置，防止向上加载时页面跳动
     useLayoutEffect(() => {
         const snapshot = scrollAdjustmentRef.current;
@@ -380,24 +391,22 @@ export default function SnsPage() {
         }
     }, [jumpTargetDate, persistSnsPageCache, searchKeyword, selectedUsernames])
 
-    // Load Contacts（仅加载朋友圈覆盖好友/曾经好友，enrichSessionsContactInfo 补充头像）
+    // Load Contacts（先展示全量好友/曾经好友，再按朋友圈条数逐步剔除 0 条联系人）
     const loadContacts = useCallback(async () => {
+        if (contactsPruneTimerRef.current !== null) {
+            window.clearTimeout(contactsPruneTimerRef.current)
+            contactsPruneTimerRef.current = null
+        }
         const requestToken = ++contactsLoadTokenRef.current
         setContactsLoading(true)
         try {
-            // 先加载联系人基础信息和朋友圈覆盖用户名，再异步补齐条数
-            const [contactsResult, snsResult] = await Promise.all([
-                window.electronAPI.chat.getContacts(),
-                window.electronAPI.sns.getSnsUsernames()
-            ])
-
-            // 好友/曾经好友基础信息（用于补充 displayName/avatar/type）
-            const knownContacts = new Map<string, Contact>()
+            const contactsResult = await window.electronAPI.chat.getContacts()
+            const contactMap = new Map<string, Contact>()
 
             if (contactsResult.success && contactsResult.contacts) {
                 for (const c of contactsResult.contacts) {
                     if (c.type === 'friend' || c.type === 'former_friend') {
-                        knownContacts.set(c.username, {
+                        contactMap.set(c.username, {
                             username: c.username,
                             displayName: c.displayName,
                             avatarUrl: c.avatarUrl,
@@ -408,52 +417,30 @@ export default function SnsPage() {
                 }
             }
 
-            if (!snsResult.success) {
-                console.error('Failed to load SNS usernames:', snsResult.error)
-            }
+            let contactsList = Array.from(contactMap.values())
 
-            // 右侧联系人只基于“朋友圈覆盖用户名”集合构建
-            const snsUsernames = Array.from(
-                new Set(
-                    (snsResult.usernames || [])
-                        .map(username => (typeof username === 'string' ? username.trim() : ''))
-                        .filter(Boolean)
-                )
-            )
+            if (requestToken !== contactsLoadTokenRef.current) return
+            setContacts(contactsList)
 
-            const contactMap = new Map<string, Contact>()
-            for (const username of snsUsernames) {
-                const known = knownContacts.get(username)
-                if (known) {
-                    contactMap.set(username, { ...known })
-                } else {
-                    contactMap.set(username, {
-                        username,
-                        displayName: username,
-                        type: 'sns_only',
-                        postCountStatus: 'loading'
-                    })
-                }
-            }
-
-            const allUsernames = Array.from(contactMap.keys())
+            const allUsernames = contactsList.map(c => c.username)
 
             // 用 enrichSessionsContactInfo 统一补充头像和显示名
             if (allUsernames.length > 0) {
                 const enriched = await window.electronAPI.chat.enrichSessionsContactInfo(allUsernames)
                 if (enriched.success && enriched.contacts) {
-                    for (const [username, extra] of Object.entries(enriched.contacts) as [string, { displayName?: string; avatarUrl?: string }][]) {
-                        const c = contactMap.get(username)
-                        if (c) {
-                            c.displayName = extra.displayName || c.displayName
-                            c.avatarUrl = extra.avatarUrl || c.avatarUrl
+                    contactsList = contactsList.map(contact => {
+                        const extra = enriched.contacts?.[contact.username]
+                        if (!extra) return contact
+                        return {
+                            ...contact,
+                            displayName: extra.displayName || contact.displayName,
+                            avatarUrl: extra.avatarUrl || contact.avatarUrl
                         }
-                    }
+                    })
+                    if (requestToken !== contactsLoadTokenRef.current) return
+                    setContacts(contactsList)
                 }
             }
-
-            if (requestToken !== contactsLoadTokenRef.current) return
-            setContacts(Array.from(contactMap.values()))
 
             const snsCountsResult = await window.electronAPI.sns.getUserPostCounts()
             if (requestToken !== contactsLoadTokenRef.current) return
@@ -462,11 +449,40 @@ export default function SnsPage() {
                 const snsPostCountMap = new Map<string, number>(
                     Object.entries(snsCountsResult.data).map(([username, count]) => [username, Math.max(0, Number(count || 0))])
                 )
-                setContacts(prev => prev.map(contact => ({
+                const contactsWithCounts = contactsList.map(contact => ({
                     ...contact,
                     postCount: snsPostCountMap.get(contact.username) ?? 0,
                     postCountStatus: 'ready'
-                })))
+                }))
+                setContacts(contactsWithCounts)
+
+                const zeroCountUsernames = contactsWithCounts
+                    .filter(contact => (contact.postCount || 0) <= 0)
+                    .map(contact => contact.username)
+
+                if (zeroCountUsernames.length > 0) {
+                    let cursor = 0
+                    const pruneNextBatch = () => {
+                        if (requestToken !== contactsLoadTokenRef.current) {
+                            contactsPruneTimerRef.current = null
+                            return
+                        }
+                        const batch = zeroCountUsernames.slice(cursor, cursor + CONTACTS_PRUNE_BATCH_SIZE)
+                        if (batch.length === 0) {
+                            contactsPruneTimerRef.current = null
+                            return
+                        }
+                        const batchSet = new Set(batch)
+                        setContacts(prev => prev.filter(contact => !batchSet.has(contact.username)))
+                        cursor += CONTACTS_PRUNE_BATCH_SIZE
+                        if (cursor < zeroCountUsernames.length) {
+                            contactsPruneTimerRef.current = window.setTimeout(pruneNextBatch, CONTACTS_PRUNE_INTERVAL_MS)
+                        } else {
+                            contactsPruneTimerRef.current = null
+                        }
+                    }
+                    contactsPruneTimerRef.current = window.setTimeout(pruneNextBatch, CONTACTS_PRUNE_INTERVAL_MS)
+                }
             } else {
                 console.error('Failed to load SNS contact post counts:', snsCountsResult.error)
                 setContacts(prev => prev.map(contact => ({
