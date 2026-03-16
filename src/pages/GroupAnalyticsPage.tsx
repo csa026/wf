@@ -188,6 +188,11 @@ function GroupAnalyticsPage() {
   const [selectedMember, setSelectedMember] = useState<GroupMember | null>(null)
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [showMemberExportModal, setShowMemberExportModal] = useState(false)
+  const [exportResultDialog, setExportResultDialog] = useState<{
+    title: string
+    message: string
+    tone: 'success' | 'error'
+  } | null>(null)
   const [showMessageMemberSelect, setShowMessageMemberSelect] = useState(false)
   const [showFormatSelect, setShowFormatSelect] = useState(false)
   const [showDisplayNameSelect, setShowDisplayNameSelect] = useState(false)
@@ -783,13 +788,25 @@ function GroupAnalyticsPage() {
 
       const result = await window.electronAPI.groupAnalytics.exportGroupMembers(selectedGroup.username, saveResult.filePath)
       if (result.success) {
-        alert(`导出成功，共 ${result.count ?? members.length} 人`)
+        setExportResultDialog({
+          title: '导出成功',
+          message: `共导出 ${result.count ?? members.length} 人`,
+          tone: 'success'
+        })
       } else {
-        alert(`导出失败：${result.error || '未知错误'}`)
+        setExportResultDialog({
+          title: '导出失败',
+          message: result.error || '未知错误',
+          tone: 'error'
+        })
       }
     } catch (e) {
       console.error('导出群成员失败:', e)
-      alert(`导出失败：${String(e)}`)
+      setExportResultDialog({
+        title: '导出失败',
+        message: String(e),
+        tone: 'error'
+      })
     } finally {
       setIsExportingMembers(false)
     }
@@ -864,13 +881,25 @@ function GroupAnalyticsPage() {
       )
       if (result.success && (result.successCount ?? 0) > 0) {
         setShowMemberExportModal(false)
-        alert(`导出成功：${member.displayName || member.username}`)
+        setExportResultDialog({
+          title: '导出成功',
+          message: `已导出 ${member.displayName || member.username}`,
+          tone: 'success'
+        })
       } else {
-        alert(`导出失败：${result.error || '未知错误'}`)
+        setExportResultDialog({
+          title: '导出失败',
+          message: result.error || '未知错误',
+          tone: 'error'
+        })
       }
     } catch (e) {
       console.error('导出成员消息失败:', e)
-      alert(`导出失败：${String(e)}`)
+      setExportResultDialog({
+        title: '导出失败',
+        message: String(e),
+        tone: 'error'
+      })
     } finally {
       setIsExportingMemberMessages(false)
     }
@@ -1048,8 +1077,8 @@ function GroupAnalyticsPage() {
         </div>
         <div className="function-card" onClick={() => handleFunctionSelect('memberMessages')}>
           <MessageSquare size={32} />
-          <span>成员消息查看</span>
-          <small>按成员筛选并分页查看群聊消息</small>
+          <span>成员消息筛选与导出</span>
+          <small>按成员查看群聊消息，并支持导出当前成员记录</small>
         </div>
         <div className="function-card" onClick={() => handleFunctionSelect('ranking')}>
           <BarChart3 size={32} />
@@ -1074,7 +1103,7 @@ function GroupAnalyticsPage() {
     const getFunctionTitle = () => {
       switch (selectedFunction) {
         case 'members': return '群成员查看'
-        case 'memberMessages': return '成员消息查看'
+        case 'memberMessages': return '成员消息筛选与导出'
         case 'ranking': return '群聊发言排行'
         case 'activeHours': return '群聊活跃时段'
         case 'mediaStats': return '媒体内容统计'
@@ -1513,6 +1542,29 @@ function GroupAnalyticsPage() {
     )
   }
 
+  const renderExportResultDialog = () => {
+    if (!exportResultDialog) return null
+
+    return (
+      <div className="member-modal-overlay" onClick={() => setExportResultDialog(null)}>
+        <div className={`member-result-modal ${exportResultDialog.tone}`} onClick={e => e.stopPropagation()}>
+          <button className="modal-close" onClick={() => setExportResultDialog(null)}>
+            <X size={20} />
+          </button>
+          <div className="member-result-modal-body">
+            <h3>{exportResultDialog.title}</h3>
+            <p>{exportResultDialog.message}</p>
+          </div>
+          <div className="member-result-modal-actions">
+            <button type="button" className="member-result-modal-btn" onClick={() => setExportResultDialog(null)}>
+              知道了
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="group-analytics-shell">
       <ChatAnalysisHeader currentMode="group" />
@@ -1525,6 +1577,7 @@ function GroupAnalyticsPage() {
       </div>
       {renderMemberModal()}
       {renderMemberExportModal()}
+      {renderExportResultDialog()}
     </div>
   )
 }

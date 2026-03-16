@@ -1606,6 +1606,11 @@
     background: rgba(30, 30, 30, 0.95);
     border: 1px solid rgba(255, 255, 255, 0.1);
   }
+
+  .member-result-modal {
+    background: rgba(30, 30, 30, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
 }
 
 // 成员详情弹框
@@ -1820,5 +1825,87 @@
 
   .member-export-panel {
     gap: 18px;
+  }
+}
+
+.member-result-modal {
+  background: rgba(255, 255, 255, 0.97);
+  border-radius: 20px;
+  padding: 28px;
+  width: min(420px, calc(100vw - 32px));
+  position: relative;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+
+  &.success {
+    border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border-color));
+  }
+
+  &.error {
+    border: 1px solid color-mix(in srgb, #ef4444 38%, var(--border-color));
+  }
+
+  .modal-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: var(--bg-tertiary);
+    border: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    transition: all 0.15s;
+
+    &:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+  }
+}
+
+.member-result-modal-body {
+  padding-right: 40px;
+
+  h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  p {
+    margin: 10px 0 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    word-break: break-word;
+  }
+}
+
+.member-result-modal-actions {
+  margin-top: 24px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.member-result-modal-btn {
+  min-width: 96px;
+  border: none;
+  border-radius: 12px;
+  background: var(--primary);
+  color: #fff;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+
+  &:hover {
+    opacity: 0.92;
   }
 }
