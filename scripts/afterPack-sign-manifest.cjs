@@ -67,11 +67,20 @@ function ensureSigningEnv() {
 }
 
 function getPlatform(context) {
-  return (
+  const raw = (
     context?.electronPlatformName ||
     context?.packager?.platform?.name ||
     process.platform
   );
+  return normalizePlatformTag(raw);
+}
+
+function normalizePlatformTag(rawPlatform) {
+  const p = String(rawPlatform || '').toLowerCase();
+  if (p === 'darwin' || p === 'mac' || p === 'macos' || p === 'osx') return 'darwin';
+  if (p === 'win32' || p === 'win' || p === 'windows') return 'win32';
+  if (p === 'linux') return 'linux';
+  return p || process.platform;
 }
 
 function getProductFilename(context) {
@@ -82,9 +91,35 @@ function getProductFilename(context) {
   );
 }
 
-function getResourcesDir(appOutDir) {
-  if (appOutDir.endsWith('.app')) {
-    return path.join(appOutDir, 'Contents', 'Resources');
+function resolveMacAppBundle(appOutDir, productFilename) {
+  const candidates = [];
+  if (String(appOutDir).toLowerCase().endsWith('.app')) {
+    candidates.push(appOutDir);
+  } else {
+    candidates.push(path.join(appOutDir, `${productFilename}.app`));
+    if (fs.existsSync(appOutDir) && fs.statSync(appOutDir).isDirectory()) {
+      const appDirs = fs
+        .readdirSync(appOutDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && e.name.toLowerCase().endsWith('.app'))
+        .map((e) => path.join(appOutDir, e.name));
+      candidates.push(...appDirs);
+    }
+  }
+
+  for (const bundleDir of candidates) {
+    const resourcesPath = path.join(bundleDir, 'Contents', 'Resources');
+    if (fs.existsSync(resourcesPath) && fs.statSync(resourcesPath).isDirectory()) {
+      return bundleDir;
+    }
+  }
+  return null;
+}
+
+function getResourcesDir(appOutDir, platform, productFilename) {
+  if (platform === 'darwin') {
+    const bundleDir = resolveMacAppBundle(appOutDir, productFilename);
+    if (!bundleDir) return path.join(appOutDir, 'resources');
+    return path.join(bundleDir, 'Contents', 'Resources');
   }
   return path.join(appOutDir, 'resources');
 }
@@ -114,7 +149,8 @@ function findExecutablePath({ appOutDir, platform, productFilename, executableNa
   }
 
   if (platform === 'darwin') {
-    const macOsDir = path.join(appOutDir, 'Contents', 'MacOS');
+    const bundleDir = resolveMacAppBundle(appOutDir, productFilename) || appOutDir;
+    const macOsDir = path.join(bundleDir, 'Contents', 'MacOS');
     const preferred = findFirstExisting([path.join(macOsDir, productFilename)]);
     if (preferred) return preferred;
     if (!fs.existsSync(macOsDir)) return null;
@@ -191,9 +227,11 @@ module.exports = async function afterPack(context) {
   const platform = String(getPlatform(context)).toLowerCase();
   const productFilename = getProductFilename(context);
   const executableName = context?.packager?.config?.linux?.executableName || '';
-  const resourcesDir = getResourcesDir(appOutDir);
+  const resourcesDir = getResourcesDir(appOutDir, platform, productFilename);
   if (!fs.existsSync(resourcesDir)) {
-    throw new Error(`[wf-sign] resources directory not found: ${resourcesDir}`);
+    throw new Error(
+      `[wf-sign] resources directory not found: ${resourcesDir}; platform=${platform}; appOutDir=${appOutDir}`,
+    );
   }
 
   const exePath = findExecutablePath({
