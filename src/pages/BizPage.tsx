@@ -75,7 +75,7 @@ export const BizAccountList: React.FC<{
                 className={`biz-account-item ${selectedUsername === item.username ? 'active' : ''} ${item.username === 'gh_3dfda90e39d6' ? 'pay-account' : ''}`}
             >
               <img
-                  src={item.avatar || 'https://res.wx.qq.com/a/wx_fed/assets/res/NTI4MWU5.png'}
+                  src={item.avatar}
                   className="biz-avatar"
                   alt=""
               />
@@ -84,13 +84,19 @@ export const BizAccountList: React.FC<{
                   <span className="biz-name">{item.name || item.username}</span>
                   <span className="biz-time">{item.formatted_last_time}</span>
                 </div>
-                <div className={`biz-badge ${
-                    item.type === 1 ? 'type-service' :
-                        item.type === 0 ? 'type-sub' :
-                            item.type === 2 ? 'type-enterprise' : 'type-unknown'
-                }`}>
-                  {item.type === 1 ? '服务号' : item.type === 0 ? '订阅号' : item.type === 2 ? '企业号' : '未知'}
-                </div>
+                {item.username === 'gh_3dfda90e39d6' && (
+                    <div className="biz-badge type-service">服务号</div>
+                )}
+
+                {/* 我看了下没有接口获取相关type，如果exec没法用的话确实无能为力，后面再适配吧 */}
+                {/*<div className={`biz-badge ${*/}
+                {/*    item.type === 1 ? 'type-service' :*/}
+                {/*        item.type === 0 ? 'type-sub' :*/}
+                {/*            item.type === 2 ? 'type-enterprise' : 'type-unknown'*/}
+                {/*}`}>*/}
+                {/*  {item.type === 1 ? '服务号' : item.type === 0 ? '订阅号' : item.type === 2 ? '企业号' : '未知'}*/}
+                {/*</div>*/}
+
               </div>
             </div>
         ))}
