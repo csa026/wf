@@ -225,6 +225,9 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
   const [isTestingInsight, setIsTestingInsight] = useState(false)
   const [insightTestResult, setInsightTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [showInsightApiKey, setShowInsightApiKey] = useState(false)
+  const [aiInsightWhitelistEnabled, setAiInsightWhitelistEnabled] = useState(false)
+  const [aiInsightWhitelist, setAiInsightWhitelist] = useState<Set<string>>(new Set())
+  const [insightWhitelistSearch, setInsightWhitelistSearch] = useState('')
 
   const [isWayland, setIsWayland] = useState(false)
   useEffect(() => {
@@ -458,12 +461,16 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
       const savedAiInsightApiModel = await configService.getAiInsightApiModel()
       const savedAiInsightSilenceDays = await configService.getAiInsightSilenceDays()
       const savedAiInsightAllowContext = await configService.getAiInsightAllowContext()
+      const savedAiInsightWhitelistEnabled = await configService.getAiInsightWhitelistEnabled()
+      const savedAiInsightWhitelist = await configService.getAiInsightWhitelist()
       setAiInsightEnabled(savedAiInsightEnabled)
       setAiInsightApiBaseUrl(savedAiInsightApiBaseUrl)
       setAiInsightApiKey(savedAiInsightApiKey)
       setAiInsightApiModel(savedAiInsightApiModel)
       setAiInsightSilenceDays(savedAiInsightSilenceDays)
       setAiInsightAllowContext(savedAiInsightAllowContext)
+      setAiInsightWhitelistEnabled(savedAiInsightWhitelistEnabled)
+      setAiInsightWhitelist(new Set(savedAiInsightWhitelist))
 
     } catch (e: any) {
       console.error('加载配置失败:', e)
@@ -1434,7 +1441,7 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
       </div>
 
       <div className="form-group quote-layout-group">
-        <label>引用消息样式</label>
+        <label>���用消息样式</label>
         <span className="form-hint">选择聊天中引用消息与正文的上下顺序，下方预览会同步展示布局差异。</span>
         <div className="quote-layout-picker" role="radiogroup" aria-label="引用样式选择">
           {[
@@ -2676,6 +2683,194 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
 
       <div className="divider" />
 
+      {/* 对话白名单 */}
+      {(() => {
+        const sortedSessions = [...chatSessions].sort((a, b) => (b.sortTimestamp || 0) - (a.sortTimestamp || 0))
+        const keyword = insightWhitelistSearch.trim().toLowerCase()
+        const filteredSessions = sortedSessions.filter((s) => {
+          const id = s.username?.trim() || ''
+          if (!id || id.endsWith('@chatroom') || id.toLowerCase().includes('placeholder')) return false
+          if (!keyword) return true
+          return (
+            String(s.displayName || '').toLowerCase().includes(keyword) ||
+            id.toLowerCase().includes(keyword)
+          )
+        })
+        const filteredIds = filteredSessions.map((s) => s.username)
+        const selectedCount = aiInsightWhitelist.size
+        const selectedInFilteredCount = filteredIds.filter((id) => aiInsightWhitelist.has(id)).length
+        const allFilteredSelected = filteredIds.length > 0 && selectedInFilteredCount === filteredIds.length
+
+        const toggleSession = (id: string) => {
+          setAiInsightWhitelist((prev) => {
+            const next = new Set(prev)
+            if (next.has(id)) next.delete(id)
+            else next.add(id)
+            return next
+          })
+        }
+
+        const saveWhitelist = async (next: Set<string>) => {
+          await configService.setAiInsightWhitelist(Array.from(next))
+        }
+
+        const selectAllFiltered = () => {
+          setAiInsightWhitelist((prev) => {
+            const next = new Set(prev)
+            for (const id of filteredIds) next.add(id)
+            void saveWhitelist(next)
+            return next
+          })
+        }
+
+        const clearSelection = () => {
+          const next = new Set<string>()
+          setAiInsightWhitelist(next)
+          void saveWhitelist(next)
+        }
+
+        return (
+          <div className="anti-revoke-tab">
+            <div className="anti-revoke-hero">
+              <div className="anti-revoke-hero-main">
+                <h3>对话白名单</h3>
+                <p>
+                  开启后，AI 见解仅对勾选的私聊对话生效，未勾选的对话将被完全忽略。关闭时对所有私聊均生效。
+                </p>
+              </div>
+              <div className="anti-revoke-metrics">
+                <div className="anti-revoke-metric is-total">
+                  <span className="label">私聊总数</span>
+                  <span className="value">{filteredIds.length + (keyword ? 0 : 0)}</span>
+                </div>
+                <div className="anti-revoke-metric is-installed">
+                  <span className="label">已选中</span>
+                  <span className="value">{selectedCount}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="log-toggle-line" style={{ marginBottom: 12 }}>
+              <span className="log-status" style={{ fontWeight: 600 }}>
+                {aiInsightWhitelistEnabled ? '白名单已启用（仅对勾选对话生效）' : '白名单未启用（对所有私聊生效）'}
+              </span>
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={aiInsightWhitelistEnabled}
+                  onChange={async (e) => {
+                    const val = e.target.checked
+                    setAiInsightWhitelistEnabled(val)
+                    await configService.setAiInsightWhitelistEnabled(val)
+                  }}
+                />
+                <span className="switch-slider" />
+              </label>
+            </div>
+
+            <div className="anti-revoke-control-card">
+              <div className="anti-revoke-toolbar">
+                <div className="filter-search-box anti-revoke-search">
+                  <Search size={14} />
+                  <input
+                    type="text"
+                    placeholder="搜索私聊对话..."
+                    value={insightWhitelistSearch}
+                    onChange={(e) => setInsightWhitelistSearch(e.target.value)}
+                  />
+                </div>
+                <div className="anti-revoke-toolbar-actions">
+                  <div className="anti-revoke-btn-group">
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={selectAllFiltered}
+                      disabled={filteredIds.length === 0 || allFilteredSelected}
+                    >
+                      全选
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={clearSelection}
+                      disabled={selectedCount === 0}
+                    >
+                      清空选择
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="anti-revoke-batch-actions">
+                <div className="anti-revoke-selected-count">
+                  <span>已选 <strong>{selectedCount}</strong> 个对话</span>
+                  <span>筛选命中 <strong>{selectedInFilteredCount}</strong> / {filteredIds.length}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="anti-revoke-list">
+              {filteredSessions.length === 0 ? (
+                <div className="anti-revoke-empty">
+                  {insightWhitelistSearch ? '没有匹配的对话' : '暂无私聊对话'}
+                </div>
+              ) : (
+                <>
+                  <div className="anti-revoke-list-header">
+                    <span>对话（{filteredSessions.length}）</span>
+                    <span>状态</span>
+                  </div>
+                  {filteredSessions.map((session) => {
+                    const isSelected = aiInsightWhitelist.has(session.username)
+                    return (
+                      <div
+                        key={session.username}
+                        className={`anti-revoke-row ${isSelected ? 'selected' : ''}`}
+                      >
+                        <label className="anti-revoke-row-main">
+                          <span className="anti-revoke-check">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={async () => {
+                                setAiInsightWhitelist((prev) => {
+                                  const next = new Set(prev)
+                                  if (next.has(session.username)) next.delete(session.username)
+                                  else next.add(session.username)
+                                  void configService.setAiInsightWhitelist(Array.from(next))
+                                  return next
+                                })
+                              }}
+                            />
+                            <span className="check-indicator" aria-hidden="true">
+                              <Check size={12} />
+                            </span>
+                          </span>
+                          <Avatar
+                            src={session.avatarUrl}
+                            name={session.displayName || session.username}
+                            size={30}
+                          />
+                          <div className="anti-revoke-row-text">
+                            <span className="name">{session.displayName || session.username}</span>
+                          </div>
+                        </label>
+                        <div className="anti-revoke-row-status">
+                          <span className={`status-badge ${isSelected ? 'installed' : 'not-installed'}`}>
+                            <i className="status-dot" aria-hidden="true" />
+                            {isSelected ? '已加入' : '未加入'}
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
+      <div className="divider" />
+
       {/* 工作原理说明 */}
       <div className="form-group">
         <label>工作原理</label>
@@ -2794,7 +2989,7 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
               value={`http://${httpApiHost}:${httpApiPort}`}
               readOnly
             />
-            <button className="btn btn-secondary" onClick={handleCopyApiUrl} title="复制">
+            <button className="btn btn-secondary" onClick={handleCopyApiUrl} title="复���">
               <Copy size={16} />
             </button>
           </div>
@@ -3160,7 +3355,7 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
                 onClick={handleSetupHello}
                 disabled={!helloAvailable || isSettingHello || !authEnabled || !helloPassword}
               >
-                {isSettingHello ? '设置中...' : '开启与设置'}
+                {isSettingHello ? '���置中...' : '开启与设置'}
               </button>
             )}
           </div>

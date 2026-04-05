@@ -87,7 +87,9 @@ export const CONFIG_KEYS = {
   AI_INSIGHT_API_KEY: 'aiInsightApiKey',
   AI_INSIGHT_API_MODEL: 'aiInsightApiModel',
   AI_INSIGHT_SILENCE_DAYS: 'aiInsightSilenceDays',
-  AI_INSIGHT_ALLOW_CONTEXT: 'aiInsightAllowContext'
+  AI_INSIGHT_ALLOW_CONTEXT: 'aiInsightAllowContext',
+  AI_INSIGHT_WHITELIST_ENABLED: 'aiInsightWhitelistEnabled',
+  AI_INSIGHT_WHITELIST: 'aiInsightWhitelist'
 } as const
 
 export interface WxidConfig {
@@ -496,7 +498,7 @@ export async function setExportDefaultTxtColumns(columns: string[]): Promise<voi
   await config.set(CONFIG_KEYS.EXPORT_DEFAULT_TXT_COLUMNS, columns)
 }
 
-// 获取导出默认并发数
+// 获取导出默认并发��
 export async function getExportDefaultConcurrency(): Promise<number | null> {
   const value = await config.get(CONFIG_KEYS.EXPORT_DEFAULT_CONCURRENCY)
   if (typeof value === 'number' && Number.isFinite(value)) return value
@@ -1614,4 +1616,22 @@ export async function getAiInsightAllowContext(): Promise<boolean> {
 
 export async function setAiInsightAllowContext(allow: boolean): Promise<void> {
   await config.set(CONFIG_KEYS.AI_INSIGHT_ALLOW_CONTEXT, allow)
+}
+
+export async function getAiInsightWhitelistEnabled(): Promise<boolean> {
+  const value = await config.get(CONFIG_KEYS.AI_INSIGHT_WHITELIST_ENABLED)
+  return value === true
+}
+
+export async function setAiInsightWhitelistEnabled(enabled: boolean): Promise<void> {
+  await config.set(CONFIG_KEYS.AI_INSIGHT_WHITELIST_ENABLED, enabled)
+}
+
+export async function getAiInsightWhitelist(): Promise<string[]> {
+  const value = await config.get(CONFIG_KEYS.AI_INSIGHT_WHITELIST)
+  return Array.isArray(value) ? (value as string[]) : []
+}
+
+export async function setAiInsightWhitelist(list: string[]): Promise<void> {
+  await config.set(CONFIG_KEYS.AI_INSIGHT_WHITELIST, list)
 }

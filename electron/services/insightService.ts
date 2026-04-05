@@ -267,6 +267,18 @@ class InsightService {
     return this.config.get('aiInsightEnabled') === true
   }
 
+  /**
+   * 判断某个会话是否允许触发见解。
+   * 若白名单未启用，则所有私聊会话均允许；
+   * 若白名单已启用，则只有在白名单中的会话才允许。
+   */
+  private isSessionAllowed(sessionId: string): boolean {
+    const whitelistEnabled = this.config.get('aiInsightWhitelistEnabled') as boolean
+    if (!whitelistEnabled) return true
+    const whitelist = (this.config.get('aiInsightWhitelist') as string[]) || []
+    return whitelist.includes(sessionId)
+  }
+
   private resetIfNewDay(): void {
     const todayStart = getStartOfDay()
     if (todayStart > this.todayDate) {
@@ -332,6 +344,7 @@ class InsightService {
         const sessionId = session.username?.trim() || ''
         if (!sessionId || sessionId.endsWith('@chatroom')) continue // 跳过群聊
         if (sessionId.toLowerCase().includes('placeholder')) continue
+        if (!this.isSessionAllowed(sessionId)) continue // 白名单过滤
 
         // lastTimestamp 单位是秒，需要转换为毫秒
         const lastTimestamp = (session.lastTimestamp || 0) * 1000
@@ -378,7 +391,7 @@ class InsightService {
       const candidates = sessions
         .filter((s) => {
           const id = s.username?.trim() || ''
-          return id && !id.endsWith('@chatroom') && !id.toLowerCase().includes('placeholder')
+          return id && !id.endsWith('@chatroom') && !id.toLowerCase().includes('placeholder') && this.isSessionAllowed(id)
         })
         .slice(0, 5)
 

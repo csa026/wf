@@ -70,6 +70,8 @@ interface ConfigSchema {
   aiInsightApiModel: string
   aiInsightSilenceDays: number
   aiInsightAllowContext: boolean
+  aiInsightWhitelistEnabled: boolean
+  aiInsightWhitelist: string[]
 }
 
 // 需要 safeStorage 加密的字段（普通模式）
@@ -149,7 +151,9 @@ export class ConfigService {
       aiInsightApiKey: '',
       aiInsightApiModel: 'gpt-4o-mini',
       aiInsightSilenceDays: 3,
-      aiInsightAllowContext: false
+      aiInsightAllowContext: false,
+      aiInsightWhitelistEnabled: false,
+      aiInsightWhitelist: []
     }
 
     const storeOptions: any = {
@@ -697,7 +701,7 @@ export class ConfigService {
   // === 工具方法 ===
 
   /**
-   * 获取当前 wxid 对应的图片密钥，优先从 wxidConfigs 中取，找不到则回退到全局配置
+   * 获取当前 wxid 对应的图片密钥，优先从 wxidConfigs 中取，找不到则回退到全局��置
    */
   getImageKeysForCurrentWxid(): { xorKey: unknown; aesKey: string } {
     const wxid = this.get('myWxid')
